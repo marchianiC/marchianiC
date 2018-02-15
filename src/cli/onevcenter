@@ -1,0 +1,197 @@
+#!/usr/bin/env ruby
+
+# -------------------------------------------------------------------------- #
+# Copyright 2002-2018, OpenNebula Project, OpenNebula Systems                #
+#                                                                            #
+# Licensed under the Apache License, Version 2.0 (the "License"); you may    #
+# not use this file except in compliance with the License. You may obtain    #
+# a copy of the License at                                                   #
+#                                                                            #
+# http://www.apache.org/licenses/LICENSE-2.0                                 #
+#                                                                            #
+# Unless required by applicable law or agreed to in writing, software        #
+# distributed under the License is distributed on an "AS IS" BASIS,          #
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.   #
+# See the License for the specific language governing permissions and        #
+# limitations under the License.                                             #
+#--------------------------------------------------------------------------- #
+
+ONE_LOCATION=ENV["ONE_LOCATION"]
+
+if !ONE_LOCATION
+    RUBY_LIB_LOCATION="/usr/lib/one/ruby"
+    REMOTES_LOCATION="/var/lib/one/remotes/"
+else
+    RUBY_LIB_LOCATION=ONE_LOCATION+"/lib/ruby"
+    REMOTES_LOCATION=ONE_LOCATION+"/var/remotes/"
+end
+
+$: << RUBY_LIB_LOCATION
+$: << RUBY_LIB_LOCATION+"/cli"
+$: << REMOTES_LOCATION+"vmm/vcenter/"
+
+require 'command_parser'
+require 'one_helper/onehost_helper'
+require 'one_helper/onecluster_helper'
+require 'vcenter_driver'
+
+def connection_options(object_name, options)
+    if  options[:vuser].nil? ||
+        options[:vcenter].nil?
+        STDERR.puts "vCenter connection parameters are mandatory to import"\
+                    " #{object_name}:\n"\
+                    "\t --vcenter vCenter hostname\n"\
+                    "\t --vuser username to login in vcenter"
+        exit -1
+    end
+
+    password = options[:vpass] || OpenNebulaHelper::OneHelper.get_password
+
+    {
+       :user     => options[:vuser],
+       :password => password,
+       :host     => options[:vcenter]
+    }
+end
+
+cmd=CommandParser::CmdParser.new(ARGV) do
+
+    usage "`onevcenter` <command> [<args>] [<options>]"
+    version OpenNebulaHelper::ONE_VERSION
+
+    helper = OneHostHelper.new
+
+    before_proc do
+        helper.set_client(options)
+    end
+
+    ############################################################################
+    # Global Options
+    ############################################################################
+    cmd_options=CommandParser::OPTIONS-[CommandParser::VERBOSE]
+    set :option, cmd_options+OpenNebulaHelper::CLIENT_OPTIONS
+
+
+    VCENTER = {
+        :name   => "vcenter",
+        :large  => "--vcenter vCenter" ,
+        :description => "The vCenter hostname",
+        :format => String
+    }
+
+    USER = {
+        :name   => "vuser",
+        :large  => "--vuser username" ,
+        :description => "The username to interact with vCenter",
+        :format => String
+    }
+
+    PASS = {
+        :name   => "vpass",
+        :large  => "--vpass password",
+        :description => "The password for the user",
+        :format => String
+    }
+
+    USE_DEFAULTS = {
+        :name   => "defaults",
+        :large  => "--use-defaults",
+        :description => "Use defaults for answers to questions",
+        :format => String
+    }
+
+    ############################################################################
+    # Import clusters
+    ############################################################################
+    hosts_desc = <<-EOT.unindent
+        Import vCenter clusters as OpenNebula hosts
+    EOT
+
+    command :hosts, hosts_desc, :options=>[ VCENTER, USER, PASS, USE_DEFAULTS ] do
+        con_ops = connection_options("Hosts", options)
+
+        VCenterDriver::Importer.import_clusters(con_ops, options)
+
+        exit 0
+    end
+
+    ############################################################################
+    # Import templates
+    ############################################################################
+    templates_desc = <<-EOT.unindent
+        Import vCenter VM Templates into OpenNebula
+    EOT
+
+    command :templates, templates_desc, :options=>[ VCENTER, USER, PASS, USE_DEFAULTS ] do
+        con_ops = connection_options("VM Templates", options)
+
+        VCenterDriver::Importer.import_templates(con_ops, options)
+
+        exit 0
+    end
+
+    ############################################################################
+    # Import vms (deprecated)
+    ############################################################################
+    vms_desc = <<-EOT.unindent
+        Deprecated action in onevcenter, please use onehost importvm instead
+    EOT
+
+    command :vms, vms_desc, :options=>[ VCENTER, USER, PASS, USE_DEFAULTS ] do
+        STDERR.puts "Deprecated action in onevcenter, please use onehost "\
+                    "importvm instead"
+        exit -1
+    end
+
+    ############################################################################
+    # Import networks
+    ############################################################################
+    network_desc = <<-EOT.unindent
+        Import vCenter networks into OpenNebula
+    EOT
+
+    command :networks, network_desc, :options=>[ VCENTER, USER, PASS, USE_DEFAULTS ] do
+        con_ops = connection_options("Networks", options)
+
+        VCenterDriver::Importer.import_networks(con_ops, options)
+
+        exit 0
+    end
+
+    ############################################################################
+    # Import datastores
+    ############################################################################
+    datastores_desc = <<-EOT.unindent
+        Import vCenter Datastores into OpenNebula
+    EOT
+
+    command :datastores, datastores_desc, :options=>[ VCENTER, USER, PASS, USE_DEFAULTS ] do
+        con_ops = connection_options("Datastores", options)
+
+        VCenterDriver::Importer.import_datastore(con_ops, options)
+
+        exit 0
+    end
+
+    ############################################################################
+    # Import images
+    ############################################################################
+    images_desc = <<-EOT.unindent
+        Import vCenter Images into OpenNebula
+    EOT
+
+    command :images, images_desc, :ds_name, :options=>[ VCENTER, USER, PASS, USE_DEFAULTS ] do
+        ds_name = args[0]
+
+        if !ds_name
+            STDERR.puts "Datastore name needed to import images from"
+            exit -1
+        end
+
+        con_ops = connection_options("Images", options)
+
+        VCenterDriver::Importer.import_images(con_ops, ds_name, options)
+
+        exit 0
+    end
+end
